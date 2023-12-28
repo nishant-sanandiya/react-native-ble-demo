@@ -1,50 +1,303 @@
-import React, {useEffect, useState} from 'react';
-import {Button, FlatList, ListRenderItemInfo, Text, View} from 'react-native';
-import BleManager from 'react-native-ble-manager';
+import React, {useEffect, useRef, useState} from 'react';
+import {
+  ActivityIndicator,
+  Button,
+  FlatList,
+  ListRenderItemInfo,
+  NativeEventEmitter,
+  NativeModules,
+  Platform,
+  Text,
+  View,
+  ViewStyle,
+} from 'react-native';
+import BleManager, {
+  BleDisconnectPeripheralEvent,
+  BleManagerDidUpdateValueForCharacteristicEvent,
+  BleState,
+  Peripheral,
+} from 'react-native-ble-manager';
+import {PERMISSIONS} from 'react-native-permissions';
+import DeviceItem from '../components/DeviceItem';
+import Loader from '../helper/Loader';
+import {
+  mergeAllPermissionFlags,
+  requestMultiplePermissionHandler,
+} from '../utils/permissionHandler';
 import styles from './styles';
+import {showSnackBar} from '../utils/toastUtils';
+
+const BleManagerModule = NativeModules.BleManager;
+const bleManagerEmitter = new NativeEventEmitter(BleManagerModule);
 
 const Scanner = () => {
-  const [deviceList, setDeviceList] = useState();
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [peripherals, setPeripherals] = useState<Peripheral[]>([]);
+  const [connectedDevicePeripherals, setConnectedDevicePeripherals] = useState<
+    Peripheral[]
+  >([]);
 
-  useEffect(() => {
-    BleManager.start({showAlert: true}).then(() => {
-      console.log('Module initialized');
-    });
-  }, []);
+  const peripheralsRef = useRef<Peripheral[]>([]);
+
+  const getConnectedDevice = async () => {
+    try {
+      Loader.showLoader();
+      const connectedDevice = await BleManager.getConnectedPeripherals();
+      setConnectedDevicePeripherals(connectedDevice);
+      const response = await BleManager.getDiscoveredPeripherals();
+      // setPeripherals(response);
+      // console.log('response :- ', response);
+      const response2 = await BleManager.getBondedPeripherals();
+      console.log(
+        'response2 :- ',
+        response2.map(obj => obj.name),
+      );
+    } catch (err) {
+      console.log('', err);
+    } finally {
+      Loader.hideLoader();
+    }
+  };
+
+  const connectWithDeviceHandler = async (peripheral: Peripheral) => {
+    try {
+      Loader.showLoader();
+      await BleManager.connect(peripheral.id);
+      console.log(`Connected with ${peripheral.id}`);
+      showSnackBar('Connection Successfully');
+    } catch (err) {
+      showSnackBar('Connection failed');
+      console.log('Error in connection with device :- ', err);
+    } finally {
+      Loader.hideLoader();
+    }
+  };
+
+  const disconnectWithDeviceHandler = async (peripheral: Peripheral) => {
+    try {
+      Loader.showLoader();
+      await BleManager.disconnect(peripheral.id);
+      console.log(`Connected with ${peripheral.id}`);
+      showSnackBar('Disconnect Successfully');
+    } catch (err) {
+      showSnackBar('Disconnect failed');
+      console.log('Error in connection with device :- ', err);
+    } finally {
+      Loader.hideLoader();
+    }
+  };
+
+  const clearPeripheralsList = () => {
+    peripheralsRef.current = [];
+    setPeripherals([]);
+  };
+
+  const handleDiscoverPeripheral = (peripheral: Peripheral) => {
+    const isExits = peripheralsRef.current.findIndex(
+      obj => obj.id === peripheral.id,
+    );
+    if (isExits === -1 && peripheral?.name) {
+      peripheralsRef.current = [...peripheralsRef.current, peripheral];
+      setPeripherals(peripheralsRef.current);
+    }
+  };
+
+  const handleStopScan = () => {
+    setIsScanning(false);
+    console.debug('[handleStopScan] scan is stopped.');
+  };
+
+  const handleDisconnectedPeripheral = (
+    event: BleDisconnectPeripheralEvent,
+  ) => {
+    getConnectedDevice();
+    console.debug(
+      `[handleDisconnectedPeripheral][${event.peripheral}] disconnected.`,
+    );
+  };
+
+  const handleUpdateValueForCharacteristic = (
+    data: BleManagerDidUpdateValueForCharacteristicEvent,
+  ) => {
+    console.debug(
+      `[handleUpdateValueForCharacteristic] received data from '${data.peripheral}' with characteristic='${data.characteristic}' and value='${data.value}'`,
+    );
+  };
+
+  const handleConnectPeripheral = (event: any) => {
+    getConnectedDevice();
+    console.log(`[handleConnectPeripheral][${event.peripheral}] connected.`);
+  };
+
+  const attachListeners = () => {
+    bleManagerEmitter.addListener(
+      'BleManagerDiscoverPeripheral',
+      handleDiscoverPeripheral,
+    );
+    bleManagerEmitter.addListener('BleManagerStopScan', handleStopScan);
+    bleManagerEmitter.addListener(
+      'BleManagerDisconnectPeripheral',
+      handleDisconnectedPeripheral,
+    );
+    bleManagerEmitter.addListener(
+      'BleManagerDidUpdateValueForCharacteristic',
+      handleUpdateValueForCharacteristic,
+    );
+    bleManagerEmitter.addListener(
+      'BleManagerConnectPeripheral',
+      handleConnectPeripheral,
+    );
+  };
+
+  const removeAllListeners = () => {
+    bleManagerEmitter.removeAllListeners('BleManagerDiscoverPeripheral');
+    bleManagerEmitter.removeAllListeners('BleManagerStopScan');
+    bleManagerEmitter.removeAllListeners('BleManagerDisconnectPeripheral');
+    bleManagerEmitter.removeAllListeners(
+      'BleManagerDidUpdateValueForCharacteristic',
+    );
+    bleManagerEmitter.removeAllListeners('BleManagerConnectPeripheral');
+  };
 
   const onScanStart = async () => {
-    try {
-      await BleManager.scan([], 0, true);
-      console.log('Start Scanning');
-    } catch (err) {
-      console.log('Error in onScanStart :- ', err);
-    }
+    console.log('Click Start Scanning');
+    BleManager.scan([], 0, true)
+      .then(() => {
+        console.log('Start Scanning');
+        setIsScanning(true);
+        attachListeners();
+      })
+      .catch(err => {
+        console.log('Error in onScanStart :- ', err);
+      });
+    console.log('Click Start Scanning End');
   };
 
   const onScanStop = async () => {
     try {
-      await BleManager.scan([], 5, true);
-      console.log('Start Scanning');
+      await BleManager.stopScan();
+      // clearPeripheralsList();
+      // removeAllListeners();
+      console.log('Start Stopped');
     } catch (err) {
-      console.log('Error in onScanStart :- ', err);
+      console.log('Error in Stopped :- ', err);
     }
   };
 
-  const renderItemHandler = (data: ListRenderItemInfo<any>) => {
+  const renderItemHandler = (data: ListRenderItemInfo<Peripheral>) => {
     return (
-      <View>
-        <Text>{data.item}</Text>
-      </View>
+      <DeviceItem
+        data={data.item}
+        disconnectHandler={disconnectWithDeviceHandler}
+        connectedDevicePeripherals={connectedDevicePeripherals}
+        connectHandler={connectWithDeviceHandler}
+      />
     );
+  };
+
+  const initial = () => {
+    if (Platform.OS === 'android') {
+      requestMultiplePermissionHandler([
+        PERMISSIONS.ANDROID.BLUETOOTH_SCAN,
+        PERMISSIONS.ANDROID.BLUETOOTH_ADVERTISE,
+        PERMISSIONS.ANDROID.BLUETOOTH_CONNECT,
+        PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
+      ])
+        .then(async responses => {
+          const flag = mergeAllPermissionFlags(responses);
+          console.log('Permission flag Android :- ', flag);
+          if (flag) {
+            const state = await BleManager.checkState();
+            try {
+              if (state === BleState.Off) {
+                await BleManager.enableBluetooth();
+              }
+              console.log('Bluetooth is Enabled !');
+              await BleManager.start();
+              console.log('Bluetooth is Start !');
+              attachListeners();
+            } catch (err) {
+              console.log('Error in ', err);
+            }
+          }
+        })
+        .catch(err => {
+          console.log('Error in enableBluetooth :- ', err);
+        });
+    } else {
+      requestMultiplePermissionHandler([
+        PERMISSIONS.IOS.BLUETOOTH,
+        PERMISSIONS.IOS.LOCATION_ALWAYS,
+        PERMISSIONS.IOS.LOCATION_WHEN_IN_USE,
+      ])
+        .then(async responses => {
+          const flag = mergeAllPermissionFlags(responses);
+          console.log('Permission flag IOS :- ', flag);
+          if (flag) {
+            try {
+              console.log('Bluetooth is Enabled !');
+              await BleManager.start();
+              console.log('Bluetooth is Start !');
+              attachListeners();
+            } catch (err) {
+              console.log('Error in ', err);
+            }
+          }
+        })
+        .catch(err => {
+          console.log('Error in requestSinglePermissionHandler :- ', err);
+        });
+    }
+  };
+
+  useEffect(() => {
+    initial();
+    return () => {
+      removeAllListeners();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const extraLoaderStyle: ViewStyle = {
+    display: isScanning ? 'flex' : 'none',
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.buttonContainer}>
-        <Button title="Scan For Devices" onPress={onScanStart} />
-        <Button title="Stop Scan" onPress={onScanStop} />
+        {isScanning ? (
+          <Button title="Stop Scan" onPress={onScanStop} />
+        ) : (
+          <Button title="Scan For Devices" onPress={onScanStart} />
+        )}
       </View>
-      <FlatList data={deviceList} renderItem={renderItemHandler} />
+      <Text style={styles.countText}>
+        Total Discovered Device :- {peripherals?.length}
+      </Text>
+      <View style={styles.detailContainer}>
+        <Text style={styles.titleText}>Connected Device :-</Text>
+        {connectedDevicePeripherals.map(obj => (
+          <View key={obj?.id}>
+            <Text style={styles.detailText}>Name : {obj?.name ?? obj?.id}</Text>
+            <Text style={styles.detailText}>Id : {obj?.id}</Text>
+            <View style={styles.breakLine} />
+          </View>
+        ))}
+      </View>
+      <ActivityIndicator size={'large'} style={extraLoaderStyle} />
+      <FlatList
+        style={styles.listStyle}
+        data={peripherals}
+        renderItem={renderItemHandler}
+        keyExtractor={(_, index) => index?.toString()}
+        ListEmptyComponent={
+          <View style={styles.row}>
+            <Text style={styles.noPeripherals}>
+              No Peripherals, press "Scan For Devices" above.
+            </Text>
+          </View>
+        }
+      />
     </View>
   );
 };
