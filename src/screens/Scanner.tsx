@@ -36,6 +36,9 @@ const Scanner = () => {
   const [connectedDevicePeripherals, setConnectedDevicePeripherals] = useState<
     Peripheral[]
   >([]);
+  const [pairedDevicePeripherals, setPairedDevicePeripherals] = useState<
+    Peripheral[]
+  >([]);
 
   const peripheralsRef = useRef<Peripheral[]>([]);
 
@@ -44,14 +47,14 @@ const Scanner = () => {
       Loader.showLoader();
       const connectedDevice = await BleManager.getConnectedPeripherals();
       setConnectedDevicePeripherals(connectedDevice);
-      const response = await BleManager.getDiscoveredPeripherals();
+      // const response = await BleManager.getDiscoveredPeripherals();
       // setPeripherals(response);
       // console.log('response :- ', response);
-      const response2 = await BleManager.getBondedPeripherals();
-      console.log(
-        'response2 :- ',
-        response2.map(obj => obj.name),
-      );
+      // const response2 = await BleManager.getBondedPeripherals();
+      // console.log(
+      //   'response2 :- ',
+      //   response2.map(obj => obj.name),
+      // );
     } catch (err) {
       console.log('', err);
     } finally {
@@ -87,10 +90,10 @@ const Scanner = () => {
     }
   };
 
-  const clearPeripheralsList = () => {
-    peripheralsRef.current = [];
-    setPeripherals([]);
-  };
+  // const clearPeripheralsList = () => {
+  //   peripheralsRef.current = [];
+  //   setPeripherals([]);
+  // };
 
   const handleDiscoverPeripheral = (peripheral: Peripheral) => {
     const isExits = peripheralsRef.current.findIndex(
@@ -129,6 +132,11 @@ const Scanner = () => {
     console.log(`[handleConnectPeripheral][${event.peripheral}] connected.`);
   };
 
+  const handleBleManagerPeripheralDidBond = (peripheral: Peripheral) => {
+    console.log('BleManagerPeripheralDidBond :- ', peripheral);
+    setPairedDevicePeripherals([peripheral]);
+  };
+
   const attachListeners = () => {
     bleManagerEmitter.addListener(
       'BleManagerDiscoverPeripheral',
@@ -147,6 +155,10 @@ const Scanner = () => {
       'BleManagerConnectPeripheral',
       handleConnectPeripheral,
     );
+    bleManagerEmitter.addListener(
+      'BleManagerPeripheralDidBond',
+      handleBleManagerPeripheralDidBond,
+    );
   };
 
   const removeAllListeners = () => {
@@ -157,6 +169,8 @@ const Scanner = () => {
       'BleManagerDidUpdateValueForCharacteristic',
     );
     bleManagerEmitter.removeAllListeners('BleManagerConnectPeripheral');
+    bleManagerEmitter.removeAllListeners('BleManagerPeripheralDidBond');
+    bleManagerEmitter.removeAllListeners('BleManagerPeripheralDidBond');
   };
 
   const onScanStart = async () => {
@@ -184,6 +198,47 @@ const Scanner = () => {
     }
   };
 
+  const getPairedDevicesHandler = async () => {
+    try {
+      const response = await BleManager.getBondedPeripherals();
+      console.log(
+        'getPairedDevicesHandler :- ',
+        response.map(obj => obj?.name),
+      );
+      // setPairedDevicePeripherals(response);
+    } catch (error) {
+      console.log('Err in get Paired Devices :- ', error);
+    }
+  };
+
+  const pairedHandler = async (obj: Peripheral) => {
+    try {
+      Loader.showLoader();
+      await BleManager.createBond(obj.id);
+      await getPairedDevicesHandler();
+      showSnackBar('Paired Successfully');
+    } catch (err) {
+      showSnackBar('Paired Failed');
+      console.log('Error in pairedHandler :- ', err);
+    } finally {
+      Loader.hideLoader();
+    }
+  };
+
+  const unpairedHandler = async (obj: Peripheral) => {
+    try {
+      await BleManager.removeBond(obj.id);
+      setPairedDevicePeripherals([]);
+      // await getPairedDevicesHandler();
+      showSnackBar('Unpaired Successfully');
+    } catch (err) {
+      showSnackBar('Unpaired Failed');
+      console.log('Error in unpairedHandler :- ', err);
+    } finally {
+      Loader.hideLoader();
+    }
+  };
+
   const renderItemHandler = (data: ListRenderItemInfo<Peripheral>) => {
     return (
       <DeviceItem
@@ -191,6 +246,9 @@ const Scanner = () => {
         disconnectHandler={disconnectWithDeviceHandler}
         connectedDevicePeripherals={connectedDevicePeripherals}
         connectHandler={connectWithDeviceHandler}
+        pairedDevicePeripherals={pairedDevicePeripherals}
+        pairHandler={pairedHandler}
+        unpairedHandler={unpairedHandler}
       />
     );
   };
@@ -214,6 +272,7 @@ const Scanner = () => {
               }
               console.log('Bluetooth is Enabled !');
               await BleManager.start();
+              BleManager.setName('React native BLE Demo');
               console.log('Bluetooth is Start !');
               attachListeners();
             } catch (err) {
@@ -264,27 +323,6 @@ const Scanner = () => {
 
   return (
     <View style={styles.container}>
-      <View style={styles.buttonContainer}>
-        {isScanning ? (
-          <Button title="Stop Scan" onPress={onScanStop} />
-        ) : (
-          <Button title="Scan For Devices" onPress={onScanStart} />
-        )}
-      </View>
-      <Text style={styles.countText}>
-        Total Discovered Device :- {peripherals?.length}
-      </Text>
-      <View style={styles.detailContainer}>
-        <Text style={styles.titleText}>Connected Device :-</Text>
-        {connectedDevicePeripherals.map(obj => (
-          <View key={obj?.id}>
-            <Text style={styles.detailText}>Name : {obj?.name ?? obj?.id}</Text>
-            <Text style={styles.detailText}>Id : {obj?.id}</Text>
-            <View style={styles.breakLine} />
-          </View>
-        ))}
-      </View>
-      <ActivityIndicator size={'large'} style={extraLoaderStyle} />
       <FlatList
         style={styles.listStyle}
         data={peripherals}
@@ -296,6 +334,45 @@ const Scanner = () => {
               No Peripherals, press "Scan For Devices" above.
             </Text>
           </View>
+        }
+        ListHeaderComponent={
+          <>
+            <View style={styles.buttonContainer}>
+              {isScanning ? (
+                <Button title="Stop Scan" onPress={onScanStop} />
+              ) : (
+                <Button title="Scan For Devices" onPress={onScanStart} />
+              )}
+            </View>
+            <Text style={styles.countText}>
+              Total Discovered Device :- {peripherals?.length}
+            </Text>
+            <View style={styles.detailContainer}>
+              <Text style={styles.titleText}>Connected Device :-</Text>
+              {connectedDevicePeripherals.map(obj => (
+                <View key={obj?.id}>
+                  <Text style={styles.detailText}>
+                    Name : {obj?.name ?? obj?.id}
+                  </Text>
+                  <Text style={styles.detailText}>Id : {obj?.id}</Text>
+                  <View style={styles.breakLine} />
+                </View>
+              ))}
+            </View>
+            <View style={styles.detailContainer}>
+              <Text style={styles.titleText}>Paired Device :-</Text>
+              {pairedDevicePeripherals.map(obj => (
+                <View key={obj?.id}>
+                  <Text style={styles.detailText}>
+                    Name : {obj?.name ?? obj?.id}
+                  </Text>
+                  <Text style={styles.detailText}>Id : {obj?.id}</Text>
+                  <View style={styles.breakLine} />
+                </View>
+              ))}
+            </View>
+            <ActivityIndicator size={'large'} style={extraLoaderStyle} />
+          </>
         }
       />
     </View>

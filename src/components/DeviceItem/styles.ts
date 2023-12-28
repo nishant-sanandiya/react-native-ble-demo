@@ -17,6 +17,12 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 10,
   },
+  buttonContainer: {
+    flexDirection: 'row',
+  },
+  breakLine: {
+    width: 20,
+  },
 });
 
 export default styles;
